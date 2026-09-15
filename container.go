@@ -30,7 +30,7 @@ func spawn(args []string) {
 	cmd := exec.Command("/proc/self/exe", append([]string{reexecMarker}, args...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS,
 	}
 	if err := cmd.Run(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "namespace child exited with error:", err)
@@ -44,6 +44,11 @@ func runInsideNamespace(args []string) {
 
 	if err := setupMounts(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "mount setup failed:", err)
+		os.Exit(1)
+	}
+
+	if err := unix.Sethostname([]byte("container")); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "set hostname failed:", err)
 		os.Exit(1)
 	}
 
