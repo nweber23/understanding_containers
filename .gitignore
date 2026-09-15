@@ -33,3 +33,6 @@ go.work.sum
 
 # Built binary (no extension on Linux, so *.exe above won't catch it)
 container-from-scratch
+
+# Generated rootfs used for pivot_root testing (stage 4+)
+rootfs/
