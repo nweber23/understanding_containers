@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -12,6 +13,12 @@ import (
 
 // reexecMarker distinguishes "I am the outer launcher" from "I am the re-exec'd copy running as PID 1 inside the new namespace"
 const reexecMarker = "__namespace_init__"
+
+const (
+	cgroupPath       = "/sys/fs/cgroup/container-from-scratch"
+	memoryLimitBytes = "20971520"
+	cpuMax           = "10000 100000"
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == reexecMarker {
@@ -42,10 +49,47 @@ func spawn(rootfs string, args []string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS,
 	}
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "namespace child exited with error:", err)
 		os.Exit(1)
 	}
+	cleanup, err := setupCgroup(cmd.Process.Pid)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "cgroup setup failed:", err)
+		os.Exit(1)
+	}
+	if err := cmd.Wait(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "cgroup wait failed:", err)
+		os.Exit(1)
+	}
+}
+
+// setupCgroup creates a fresh cgroup caps its memory and CPU, and moves PID into it.
+func setupCgroup(pid int) (cleanup func(), err error) {
+	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+		return nil, fmt.Errorf("creating group: %w", err)
+	}
+	cleanup = func() { _ = os.Remove(cgroupPath) }
+
+	if err := os.WriteFile(filepath.Join(cgroupPath, "memory.max"), []byte(memoryLimitBytes), 0644); err != nil {
+		return cleanup, fmt.Errorf("setting memory limit: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(cgroupPath, "memory.swap.max"), []byte("0"), 0644); err != nil {
+		return cleanup, fmt.Errorf("setting memory swap: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(cgroupPath, "cpu.max"), []byte(cpuMax), 0644); err != nil {
+		return cleanup, fmt.Errorf("setting cpu max: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(cgroupPath, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644); err != nil {
+		return cleanup, fmt.Errorf("setting cgroup.procs: %w", err)
+	}
+	return cleanup, nil
 }
 
 // runInsideNamespace is the code that runs AS PID 1 of the new namespace, after clone() but before we hand off to the real target program.
