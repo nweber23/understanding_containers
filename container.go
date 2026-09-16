@@ -47,7 +47,7 @@ func spawn(rootfs string, args []string) {
 	cmd := exec.Command("/proc/self/exe", argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS,
+		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUTS | syscall.CLONE_NEWNET,
 	}
 	if err := cmd.Start(); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "namespace child exited with error:", err)
