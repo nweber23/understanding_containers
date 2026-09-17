@@ -36,3 +36,4 @@ container-from-scratch
 
 # Generated rootfs used for pivot_root testing (stage 4+)
 rootfs/
+layers/
