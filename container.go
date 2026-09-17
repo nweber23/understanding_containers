@@ -18,6 +18,7 @@ const (
 	cgroupPath       = "/sys/fs/cgroup/container-from-scratch"
 	memoryLimitBytes = "20971520"
 	cpuMax           = "10000 100000"
+	pidsMax          = "64"
 )
 
 func main() {
@@ -84,6 +85,10 @@ func setupCgroup(pid int) (cleanup func(), err error) {
 
 	if err := os.WriteFile(filepath.Join(cgroupPath, "cpu.max"), []byte(cpuMax), 0644); err != nil {
 		return cleanup, fmt.Errorf("setting cpu max: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(cgroupPath, "pids.max"), []byte(pidsMax), 0644); err != nil {
+		return cleanup, fmt.Errorf("setting pids max: %w", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(cgroupPath, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644); err != nil {
