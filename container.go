@@ -127,14 +127,39 @@ func runInsideNamespace(layersRoot string, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("[rootfs] pivoted into %s, about to exec %v\n", merged, args)
+	fmt.Printf("[rootfs] pivoted into %s, about to run %v\n", merged, args)
 
-	// execve replaces this process image in place no fork, no leftover
-	// Go runtime state, just this process becoming the target binary while remaining PID 1 of the namespace.
-	if err := unix.Exec(args[0], args, os.Environ()); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "exec failed:", err)
+	runAsInit(args)
+}
+
+// runAsInit starts the target command as a child instead of exec'ing
+// directly into it, so this process stays PID 1 and can reap zombies.
+// Any process that gets orphaned and reparented to PID 1 must be
+// wait()'d or it lingers forever as a <defunct> entry.
+func runAsInit(args []string) {
+	child := exec.Command(args[0], args[1:]...)
+	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := child.Start(); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "starting", args, "failed:", err)
 		os.Exit(1)
 	}
+	mainPid := child.Process.Pid
+
+	exitCode := 0
+	for {
+		var ws unix.WaitStatus
+		pid, err := unix.Wait4(-1, &ws, 0, nil)
+		if err == unix.EINTR {
+			continue
+		}
+		if err != nil {
+			break // ECHILD: no children left to reap
+		}
+		if pid == mainPid {
+			exitCode = ws.ExitStatus()
+		}
+	}
+	os.Exit(exitCode)
 }
 
 func makeMountsPrivate() error {
