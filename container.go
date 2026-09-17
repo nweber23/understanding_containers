@@ -93,7 +93,7 @@ func setupCgroup(pid int) (cleanup func(), err error) {
 }
 
 // runInsideNamespace is the code that runs AS PID 1 of the new namespace, after clone() but before we hand off to the real target program.
-func runInsideNamespace(rootfs string, args []string) {
+func runInsideNamespace(layersRoot string, args []string) {
 	fmt.Printf("[pid namespace] my pid in here: %d (should be 1)\n", unix.Getpid())
 
 	if err := makeMountsPrivate(); err != nil {
@@ -106,7 +106,13 @@ func runInsideNamespace(rootfs string, args []string) {
 		os.Exit(1)
 	}
 
-	if err := pivotRoot(rootfs); err != nil {
+	merged, err := mountOverlay(layersRoot)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "overlay mount failed:", err)
+		os.Exit(1)
+	}
+
+	if err := pivotRoot(merged); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "pivot root failed:", err)
 		os.Exit(1)
 	}
@@ -116,7 +122,7 @@ func runInsideNamespace(rootfs string, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("[rootfs] pivoted into %s, about to exec %v\n", rootfs, args)
+	fmt.Printf("[rootfs] pivoted into %s, about to exec %v\n", merged, args)
 
 	// execve replaces this process image in place no fork, no leftover
 	// Go runtime state, just this process becoming the target binary while remaining PID 1 of the namespace.
@@ -132,6 +138,38 @@ func makeMountsPrivate() error {
 
 func mountProc() error {
 	return unix.Mount("proc", "/proc", "proc", 0, "")
+}
+
+// mountOverlay combines layersRoot/lower with layersRoot/upper into layersRoot/merged.
+func mountOverlay(layersRoot string) (string, error) {
+	lower := filepath.Join(layersRoot, "lower")
+	upper := filepath.Join(layersRoot, "upper")
+	work := filepath.Join(layersRoot, "work")
+	merged := filepath.Join(layersRoot, "merged")
+
+	for _, dir := range []string{lower, upper, work, merged} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("creating %s: %w", dir, err)
+		}
+	}
+
+	absLower, err := filepath.Abs(lower)
+	if err != nil {
+		return "", err
+	}
+	absUpper, err := filepath.Abs(upper)
+	if err != nil {
+		return "", err
+	}
+	absWork, err := filepath.Abs(work)
+	if err != nil {
+		return "", err
+	}
+	opts := fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", absLower, absUpper, absWork)
+	if err := unix.Mount("overlay", merged, "overlay", 0, opts); err != nil {
+		return "", fmt.Errorf("mounting overlay: %w", err)
+	}
+	return merged, nil
 }
 
 // pivotRoot makes newRoot the process's root filesystem and unmounts the old root, so nothing outside newRoot is reachable anymore
